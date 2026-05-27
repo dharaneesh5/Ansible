@@ -1,17 +1,21 @@
 #!/bin/bash
 RED='\033[1;31m'
 NC='\033[0m'
+
 echo -e "${RED}
 #######################################################################
 #                 WordPress has been deployed successfully!            #
 #               Passwords are stored under /root/                     #
 #######################################################################
 ${NC}"
+
 echo
 echo -e "${RED}Refer to the below WordPress MySQL password${NC}"
 echo
 cat /root/.wordpress_mysql_password
 echo
+
+# Cleanup
 rm -rf /usr/local/src/
 mkdir -p /usr/local/src/
 rm -rf /var/lib/cloud/instances/*
@@ -25,6 +29,9 @@ apt-get -y autoclean >/dev/null 2>&1
 history -c
 cat /dev/null > /root/.bash_history
 unset HISTFILE
-rm -rf /root/.bashrc
-cp /etc/skel/.bashrc /root
+
+# ✅ Remove the trigger line from .bashrc so it never runs again
+sed -i '/mysql-standalone-cleanup.sh/d' /root/.bashrc
+
+# ✅ Remove the script itself
 rm -rf /opt/cloudstack

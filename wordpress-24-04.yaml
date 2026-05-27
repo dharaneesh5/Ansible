@@ -1,0 +1,170 @@
+- name: WordPress Standalone Setup
+  hosts: localhost
+  vars:
+    wordpress_db: wordpress
+    wordpress_user: wpuser
+  tasks:
+    - name: Updating packages
+      apt:
+        update_cache: yes
+
+    - name: Installing required packages
+      apt:
+        name:
+          - apache2
+          - mysql-server
+          - php
+          - php-mysql
+          - php-cli
+          - php-curl
+          - php-xml
+          - php-mbstring
+          - php-zip
+          - unzip
+          - wget
+        state: latest
+
+    - name: Enable mod_rewrite for WordPress permalinks
+      command: a2enmod rewrite
+      notify: Restart apache
+
+    - name: Starting apache
+      service:
+        name: apache2
+        state: started
+        enabled: yes
+
+    - name: Starting mysql
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+
+    - name: Generate MySQL password
+      shell: openssl rand -hex 24
+      register: mysqlpassword
+
+    - name: Store MySQL password
+      copy:
+        dest: "/root/.wordpress_mysql_password"
+        content: |
+          wordpress_mysql_password={{ mysqlpassword.stdout }}
+
+    - name: Create WordPress database
+      shell: |
+        mysql -e "CREATE DATABASE IF NOT EXISTS {{ wordpress_db }};"
+
+    - name: Create WordPress user
+      shell: |
+        mysql -e "CREATE USER IF NOT EXISTS '{{ wordpress_user }}'@'localhost' IDENTIFIED BY '{{ mysqlpassword.stdout }}';"
+
+    - name: Grant privileges
+      shell: |
+        mysql -e "GRANT ALL PRIVILEGES ON {{ wordpress_db }}.* TO '{{ wordpress_user }}'@'localhost'; FLUSH PRIVILEGES;"
+
+    - name: Remove default Apache index page
+      file:
+        path: /var/www/html/index.html
+        state: absent
+
+    - name: Download WordPress
+      shell: |
+        cd /tmp && wget -q https://wordpress.org/latest.tar.gz
+
+    - name: Extract WordPress
+      shell: |
+        cd /tmp && tar -xf latest.tar.gz
+
+    - name: Copy WordPress files
+      shell: |
+        cp -r /tmp/wordpress/* /var/www/html/
+
+    - name: Set permissions
+      shell: |
+        chown -R www-data:www-data /var/www/html
+        chmod -R 755 /var/www/html
+
+    - name: Generate WordPress secret keys
+      shell: openssl rand -hex 32
+      register: wp_secret_key
+
+    - name: Create wp-config.php
+      copy:
+        dest: /var/www/html/wp-config.php
+        content: |
+          <?php
+          define('DB_NAME', '{{ wordpress_db }}');
+          define('DB_USER', '{{ wordpress_user }}');
+          define('DB_PASSWORD', '{{ mysqlpassword.stdout }}');
+          define('DB_HOST', 'localhost');
+          define('DB_CHARSET', 'utf8');
+          define('DB_COLLATE', '');
+          define('AUTH_KEY',         '{{ wp_secret_key.stdout }}');
+          define('SECURE_AUTH_KEY',  '{{ wp_secret_key.stdout }}');
+          define('LOGGED_IN_KEY',    '{{ wp_secret_key.stdout }}');
+          define('NONCE_KEY',        '{{ wp_secret_key.stdout }}');
+          define('AUTH_SALT',        '{{ wp_secret_key.stdout }}');
+          define('SECURE_AUTH_SALT', '{{ wp_secret_key.stdout }}');
+          define('LOGGED_IN_SALT',   '{{ wp_secret_key.stdout }}');
+          define('NONCE_SALT',       '{{ wp_secret_key.stdout }}');
+          $table_prefix = 'wp_';
+          define('WP_DEBUG', false);
+          if ( !defined('ABSPATH') )
+              define('ABSPATH', dirname(__FILE__) . '/');
+          require_once(ABSPATH . 'wp-settings.php');
+
+    - name: Configure Apache AllowOverride for WordPress permalinks
+      copy:
+        dest: /etc/apache2/sites-available/wordpress.conf
+        content: |
+          <VirtualHost *:80>
+              ServerAdmin webmaster@localhost
+              DocumentRoot /var/www/html
+              <Directory /var/www/html>
+                  Options Indexes FollowSymLinks
+                  AllowOverride All
+                  Require all granted
+              </Directory>
+              ErrorLog ${APACHE_LOG_DIR}/error.log
+              CustomLog ${APACHE_LOG_DIR}/access.log combined
+          </VirtualHost>
+
+    - name: Enable WordPress Apache site
+      command: a2ensite wordpress.conf
+
+    - name: Disable default Apache site
+      command: a2dissite 000-default.conf
+
+    - name: Create cleanup directory
+      file:
+        path: /opt/cloudstack
+        state: directory
+
+    - name: Copy cleanup script
+      copy:
+        src: /usr/local/src/wordpress-24-04/opt/cloudstack/mysql-standalone-cleanup.sh
+        dest: /opt/cloudstack/mysql-standalone-cleanup.sh
+        mode: '0755'
+
+    - name: Add cleanup script to bashrc
+      lineinfile:
+        path: /root/.bashrc
+        line: "chmod +x /opt/cloudstack/mysql-standalone-cleanup.sh && /opt/cloudstack/mysql-standalone-cleanup.sh"
+        state: present
+
+    - name: Restart apache
+      service:
+        name: apache2
+        state: restarted
+
+    - debug:
+        msg: "WordPress installed successfully"
+
+    - debug:
+        msg: "MySQL password stored in /root/.wordpress_mysql_password"
+
+  handlers:
+    - name: Restart apache
+      service:
+        name: apache2
+        state: restarted
